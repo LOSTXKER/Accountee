@@ -156,6 +156,28 @@ The application uses Supabase PostgreSQL with the following main tables:
 ## 🚀 Deployment
 
 ### Vercel (Recommended)
+Your app is already configured for Vercel deployment!
+
+1. **Environment Variables Setup**
+   - Go to [Vercel Dashboard](https://vercel.com/dashboard)
+   - Find your "accountee" project
+   - Go to Settings → Environment Variables
+   - Add these three variables for Production, Preview, and Development:
+     ```
+     NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+     NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+     SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+     ```
+
+2. **Deploy**
+   - Push any commit to GitHub to trigger auto-deployment
+   - Or use: `vercel --prod` from command line
+   - Or manually redeploy from Vercel dashboard
+
+3. **Live URL**: Your app will be available at:
+   `https://accountee-[unique-id].vercel.app`
+
+### Manual Deployment
 1. Push to GitHub
 2. Connect Vercel to your repository
 3. Configure environment variables

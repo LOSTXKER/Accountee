@@ -32,9 +32,17 @@ export default function RegisterPage() {
 
     setIsLoading(true);
     try {
+      // ใช้ production URL หากอยู่ใน production environment
+      const redirectUrl = process.env.NODE_ENV === 'production' 
+        ? 'https://accountee.vercel.app/dashboard'
+        : `${window.location.origin}/dashboard`;
+        
       const { error } = await supabase.auth.signUp({
         email,
         password,
+        options: {
+          emailRedirectTo: redirectUrl
+        }
       });
       if (error) throw error;
       setIsSuccess(true);
