@@ -44,7 +44,7 @@ export default function CreateContactPage() {
         }
         
         const customerData = {
-            business_id: businessId,
+            businessid: businessId,
             name: displayName,
             address: fullAddress,
             contact_type: formState.contactType,

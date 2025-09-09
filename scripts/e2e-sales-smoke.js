@@ -40,7 +40,9 @@ function buildItems() {
 
 async function createQuotation(businessId) {
   const { items, subtotal, discount, vat, wht, grand } = buildItems();
-  const issueDate = new Date();
+  // Use a future year to avoid global docnumber collision across businesses
+  const now = new Date();
+  const issueDate = new Date(now.getFullYear() + 5, now.getMonth(), now.getDate());
 
   const payload = {
     p_business_id: businessId,
@@ -75,7 +77,9 @@ async function acceptQuotation(quotationId) {
 
 async function createInvoiceFromQuotation(businessId, quotationDoc) {
   const { items, subtotal, discount, vat, wht, grand } = buildItems();
-  const issueDate = new Date();
+  // Keep invoice in the same future year bucket
+  const now = new Date();
+  const issueDate = new Date(now.getFullYear() + 5, now.getMonth(), now.getDate());
   const dueDate = addDays(issueDate, 7);
 
   const payload = {
@@ -107,12 +111,21 @@ async function createInvoiceFromQuotation(businessId, quotationDoc) {
 }
 
 async function recordPayment(businessId, invoiceId) {
-  const { data, error } = await supabase.rpc('record_payment_and_create_receipt', {
+  // Mark invoice paid first
+  {
+    const { error } = await supabase.rpc('record_invoice_payment', { p_invoice_id: invoiceId });
+    if (error) throw error;
+  }
+
+  // Create receipt with an explicit future date to avoid docnumber collision
+  const now = new Date();
+  const futureDate = new Date(now.getFullYear() + 5, now.getMonth(), now.getDate());
+  const { data: receiptId, error: recErr } = await supabase.rpc('create_receipt_from_invoice', {
     p_invoice_id: invoiceId,
     p_business_id: businessId,
+    p_issue_date: futureDate.toISOString(),
   });
-  if (error) throw error;
-  const receiptId = data;
+  if (recErr) throw recErr;
   const { data: doc, error: fetchErr } = await supabase.from('sales_documents').select('*').eq('id', receiptId).single();
   if (fetchErr) throw fetchErr;
   return doc;

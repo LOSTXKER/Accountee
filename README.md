@@ -70,6 +70,49 @@ A comprehensive accounting and business management system built with Next.js 14,
    SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
    ```
 
+## 🔄 Migrate to a new Supabase project (Checklist)
+
+Follow this when switching to a brand-new Supabase project and you want all features to work 100%:
+
+1) Create a new project on Supabase and copy these keys
+   - NEXT_PUBLIC_SUPABASE_URL
+   - NEXT_PUBLIC_SUPABASE_ANON_KEY
+   - SUPABASE_SERVICE_ROLE_KEY (Server only)
+
+2) Update local and Vercel environment variables
+   - .env.local (for local dev)
+   - Vercel → Project Settings → Environment Variables (Production/Preview/Dev)
+
+3) Bootstrap Storage buckets
+   - Required buckets used by the app: `attachments`, `wht_certificates`, `business_assets`, `files`
+   - You can run the helper script:
+     - node scripts/bootstrap-storage.js
+
+4) Deploy SQL functions (RPCs) and helpers
+   - Open Supabase Dashboard → SQL Editor
+   - Run first: `sql/bootstrap_schema.sql` (สร้างตารางและ enum ที่ต้องใช้)
+   - แล้วค่อยรัน: `sql/sales_document_functions.sql` และ `sql/app_functions.sql`
+   - This adds/updates functions:
+     - _next_docnumber, create_sales_document, accept_quotation,
+       record_invoice_payment, record_payment_and_create_receipt,
+       create_receipt_from_invoice, get_sales_document_summary, get_document_timeline
+
+5) Verify database schema and RPC availability (optional helpers)
+   - node scripts/health-check.js
+   - node scripts/verify-functions.js
+   - node scripts/check-schema.js
+   - node scripts/check-table.js
+
+6) Smoke tests in the app
+   - Login → Create a transaction (income/expense) with attachments → Update statuses
+   - Export transactions via UI (calls /api/export-transactions)
+   - Generate WHT certificate for a transaction with withholding → checks bucket `wht_certificates`
+
+Troubleshooting
+- If a function is missing (error 42883/PGRST202), re-run the SQL from `sql/sales_document_functions.sql`
+- If file uploads fail, ensure buckets exist and are public, and your Service Role Key is correct
+- If auth/session has issues, verify middleware is active and environment variables are set
+
 4. **Database Setup**
    Run the SQL functions for sales documents:
    ```bash

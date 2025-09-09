@@ -11,7 +11,16 @@
     "check-db": "node check-database.js",
     "test:performance": "node scripts/performance-test.js",
     "test:perf": "npm run test:performance",
-    "deploy:sql": "node scripts/deploy-sql-functions.js"
+  "deploy:sql": "node scripts/deploy-sql-functions.js",
+  "sql:bundle": "node scripts/build-sql-bundle.js",
+  "bootstrap:storage": "node scripts/bootstrap-storage.js",
+  "check:anon": "node scripts/check-anon.js",
+  "verify:functions": "node scripts/verify-functions.js",
+  "health": "node scripts/health-check.js",
+  "check:schema": "node scripts/check-schema.js",
+  "check:table": "node scripts/check-table.js",
+  "check:recurring": "node scripts/check-recurring.js",
+  "check:counters": "node scripts/check-counters.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

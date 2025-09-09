@@ -26,8 +26,8 @@ async function deploySqlFunctions() {
     try {
         console.log('🚀 Deploying SQL performance functions to Supabase...\n');
 
-        // Read the SQL file
-        const sqlPath = path.join(__dirname, '../sql/performance_functions.sql');
+    // Read the SQL file (sales document RPCs)
+    const sqlPath = path.join(__dirname, '../sql/sales_document_functions.sql');
         
         if (!fs.existsSync(sqlPath)) {
             throw new Error(`SQL file not found: ${sqlPath}`);
@@ -42,7 +42,7 @@ async function deploySqlFunctions() {
         console.log('📋 Manual Deployment Instructions:');
         console.log('   1. Open Supabase Dashboard → SQL Editor');
         console.log('   2. Create a new query');
-        console.log('   3. Copy and paste the SQL content from: sql/performance_functions.sql');
+    console.log('   3. Copy and paste the SQL content from: sql/sales_document_functions.sql');
         console.log('   4. Click "Run" to execute the SQL');
         console.log('\n🔗 Supabase SQL Editor URL:');
         console.log(`   ${supabaseUrl.replace('supabase.co', 'supabase.co/project/' + supabaseUrl.split('.')[0].split('//')[1] + '/sql')}`);

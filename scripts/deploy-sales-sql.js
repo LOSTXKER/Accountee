@@ -27,8 +27,10 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 
     console.log('\n📋 Manual Deployment Steps:');
     console.log('  1) Open Supabase Dashboard → SQL Editor');
-    console.log('  2) Copy content from sql/sales_document_functions.sql');
-    console.log('  3) Click Run');
+    console.log('  2) Copy content from:');
+    console.log('     - sql/sales_document_functions.sql (sales docs workflows)');
+    console.log('     - sql/app_functions.sql (reports, dashboard, exports)');
+    console.log('  3) Click Run (run both files)');
 
     if (supabaseUrl) {
       const hint = `${supabaseUrl}`;

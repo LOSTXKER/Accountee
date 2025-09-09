@@ -15,12 +15,9 @@ async function checkSchema() {
     console.log('📋 Checking sales_documents table schema...\n');
 
     try {
-        // Check table columns
+        // Check table columns via RPC (information_schema is not exposed via PostgREST)
         const { data: columns, error } = await supabase
-            .from('information_schema.columns')
-            .select('column_name, data_type, is_nullable')
-            .eq('table_name', 'sales_documents')
-            .order('ordinal_position');
+            .rpc('get_table_columns', { p_table_name: 'sales_documents' });
 
         if (error) {
             console.error('Error fetching schema:', error);
@@ -30,7 +27,7 @@ async function checkSchema() {
         console.log('Columns in sales_documents table:');
         console.log('=====================================');
         columns.forEach(col => {
-            console.log(`${col.column_name.padEnd(25)} | ${col.data_type.padEnd(20)} | ${col.is_nullable === 'YES' ? 'NULL' : 'NOT NULL'}`);
+            console.log(`${String(col.column_name).padEnd(25)} | ${String(col.data_type).padEnd(20)} | ${String(col.is_nullable) === 'YES' ? 'NULL' : 'NOT NULL'}`);
         });
 
         // Check for specific fields mentioned in error
