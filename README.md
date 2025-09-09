@@ -278,6 +278,17 @@ For support and questions:
 - [ ] Inventory management
 - [ ] API integrations
 
+## 🗄️ Archived docs
+
+Older fix/optimization write-ups have been consolidated. See `docs/archive/` for historical references:
+- SALES_DOCUMENT_FIX.md
+- WHT_CERTIFICATE_FIX_COMPLETE.md
+- PERFORMANCE_TESTING_GUIDE.md
+- PERFORMANCE_REPORT.md
+- PERFORMANCE_IMPROVEMENTS.md
+- OPTIMIZATION_REPORT.md
+- DATABASE_FIX_GUIDE.md
+- DEPLOY_SQL_FUNCTIONS.md
 ---
 
 **Built with ❤️ for small businesses in Thailand**
