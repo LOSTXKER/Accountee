@@ -26,6 +26,7 @@ jobs:
       # Deploy to Vercel using GitHub Action
       # Requires repo secrets: VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID
       - name: Deploy to Vercel
+        id: vercel
         uses: amondnet/vercel-action@v25
         with:
           vercel-token: ${{ secrets.VERCEL_TOKEN }}
@@ -33,3 +34,9 @@ jobs:
           vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
           working-directory: .
           vercel-args: '--prod'
+
+      - name: Output deployment URLs
+        run: |
+          echo "Preview URL: ${{ steps.vercel.outputs.preview-url }}"
+          echo "Deployment URL: ${{ steps.vercel.outputs.vercel-url }}"
+          echo "Inspector URL: ${{ steps.vercel.outputs.inspector-url }}"
