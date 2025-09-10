@@ -195,12 +195,12 @@ begin
         end if;
         exit; -- success
       exception when unique_violation then
-        v_attempts := v_attempts + 1;
-        if v_attempts > 5 then
+  v_attempts := v_attempts + 1;
+  if v_attempts > 8 then
           raise; -- give up after a few attempts
         end if;
-        -- recompute next docnumber and retry
-        v_docnumber := public._next_docnumber(p_business_id, p_doc_type, v_issue_date);
+  -- recompute next docnumber safely: re-scan for current max to avoid repeating the same value
+  v_docnumber := public._next_docnumber(p_business_id, p_doc_type, v_issue_date);
       end;
     end loop;
   end;
@@ -466,5 +466,173 @@ $$;
 
 grant execute on function public.get_document_timeline(uuid) to anon, authenticated, service_role;
 
+-- 5) Helper: Create income transaction for a receipt (idempotent)
+create or replace function public._create_income_tx_for_receipt(
+  p_receipt_id uuid
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_receipt sales_documents%rowtype;
+  v_tx_id uuid;
+  v_status text;
+  v_desc text;
+begin
+  select * into v_receipt from sales_documents where id = p_receipt_id and lower(type::text) = 'receipt';
+  if not found then
+    raise exception 'Receipt not found' using errcode = 'P0001';
+  end if;
+
+  -- Idempotent: if a transaction is already linked by source_doc_id, return it
+  select id into v_tx_id from transactions where source_doc_id = v_receipt.id limit 1;
+  if v_tx_id is not null then
+    return v_tx_id;
+  end if;
+
+  v_status := case when coalesce(v_receipt.withholdingtaxamount, 0) > 0 then 'รอรับ หัก ณ ที่จ่าย' else 'เสร็จสมบูรณ์' end;
+  v_desc := coalesce('รายรับจากใบเสร็จ ' || v_receipt.docnumber || ' (คู่ค้า: ' || v_receipt.customername || ')', 'รายรับจากใบเสร็จ');
+
+  insert into transactions (
+    businessid, date, description, amount, type, category, status, attachment_status,
+    vat_type, subtotal, vat_amount, withholdingtax, isdeleted, source_doc_id
+  ) values (
+    v_receipt.businessid,
+    coalesce(v_receipt.issuedate, now()),
+    v_desc,
+    coalesce(v_receipt.grandtotal, 0),
+    'income',
+    'รายได้จากการให้บริการ',
+    v_status,
+    'none',
+    'include',
+    coalesce(v_receipt.subtotal, 0),
+    coalesce(v_receipt.vatamount, 0),
+    coalesce(v_receipt.withholdingtaxamount, 0),
+    false,
+    v_receipt.id
+  ) returning id into v_tx_id;
+
+  return v_tx_id;
+end;
+$$;
+
+grant execute on function public._create_income_tx_for_receipt(uuid) to anon, authenticated, service_role;
+
+-- 5.1) Trigger: After insert/update of receipt to auto-create income transaction
+drop trigger if exists trg_sales_documents_receipt_tx on public.sales_documents;
+create or replace function public._trg_receipt_create_tx()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if lower(new.type::text) = 'receipt' and new.status = 'สมบูรณ์'::document_status then
+    perform public._create_income_tx_for_receipt(new.id);
+  end if;
+  return new;
+end;
+$$;
+
+create trigger trg_sales_documents_receipt_tx
+after insert or update of status on public.sales_documents
+for each row
+execute function public._trg_receipt_create_tx();
+
+-- Wire helper into existing RPCs (idempotent behavior)
+-- After creating receipt in record_payment_and_create_receipt
+-- and create_receipt_from_invoice, ensure income transaction is created.
+
 -- Ask PostgREST to reload schema so new columns/functions are visible immediately
 select pg_notify('pgrst', 'reload schema');
+
+-- ========== TRANSACTION DOCNUMBER AUTONUMBERING ==========
+-- Helper to return prefix per type
+create or replace function public._tx_prefix(p_type text)
+returns text
+language sql
+immutable
+as $$
+  select case p_type
+           when 'income' then 'INC'
+           when 'expense' then 'EXP'
+           when 'cogs' then 'COGS'
+           else 'TX'
+         end;
+$$;
+
+-- Generate next transaction docnumber: {PREFIX}-{YYYY}-{####}
+create or replace function public._next_tx_docnumber(
+  p_business_id uuid,
+  p_type text,
+  p_date timestamptz default now()
+)
+returns text
+language plpgsql
+as $$
+declare
+  v_year int := cast(to_char(coalesce(p_date, now()), 'YYYY') as int);
+  v_prefix text := public._tx_prefix(p_type);
+  v_next int;
+begin
+  -- Use counters table with upsert-like logic
+  loop
+    begin
+      -- Ensure row exists
+      insert into public.transaction_counters (business_id, year)
+      values (p_business_id, v_year)
+      on conflict do nothing;
+
+      if p_type = 'income' then
+        update public.transaction_counters
+           set income_next_number = income_next_number + 1
+         where business_id = p_business_id
+           and year = v_year
+        returning income_next_number - 1 into v_next;
+      elsif p_type = 'expense' then
+        update public.transaction_counters
+           set expense_next_number = expense_next_number + 1
+         where business_id = p_business_id
+           and year = v_year
+        returning expense_next_number - 1 into v_next;
+      else
+        update public.transaction_counters
+           set cogs_next_number = cogs_next_number + 1
+         where business_id = p_business_id
+           and year = v_year
+        returning cogs_next_number - 1 into v_next;
+      end if;
+      exit; -- success
+    exception when others then
+      -- small wait then retry
+      perform pg_sleep(0.05);
+    end;
+  end loop;
+
+  return format('%s-%s-%s', v_prefix, v_year::text, lpad(v_next::text, 4, '0'));
+end;
+$$;
+
+grant execute on function public._next_tx_docnumber(uuid, text, timestamptz) to anon, authenticated, service_role;
+
+-- Trigger to set transactions.docnumber on insert if null
+drop trigger if exists trg_transactions_autonumber on public.transactions;
+create or replace function public._trg_transactions_autonumber()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.docnumber is null or length(new.docnumber) = 0 then
+    new.docnumber := public._next_tx_docnumber(new.businessid, new.type, coalesce(new.date, now()));
+  end if;
+  return new;
+end;
+$$;
+
+create trigger trg_transactions_autonumber
+before insert on public.transactions
+for each row execute function public._trg_transactions_autonumber();
+

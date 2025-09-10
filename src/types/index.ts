@@ -97,6 +97,7 @@ export interface Transaction {
   id: string;
   businessid: string;
   date: Date | string;
+  docnumber?: string | null;
   description: string;
   amount: number;
   type: TransactionType;

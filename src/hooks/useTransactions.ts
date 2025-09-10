@@ -29,7 +29,8 @@ const fetchTransactions = async (
         .select('*')
         .eq('businessid', businessId)
         .eq('isdeleted', false)
-        .order('date', { ascending: false })
+    .order('date', { ascending: false })
+    .order('created_at', { ascending: false })
         .range(offset, offset + limit - 1);
 
     if (pageType === 'income') {

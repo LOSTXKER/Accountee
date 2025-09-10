@@ -59,8 +59,8 @@ create table if not exists public.sales_documents (
   created_at timestamptz not null default now()
 );
 
--- Unique constraint to support docnumber collision handling
-create unique index if not exists uq_sales_documents_docnumber on public.sales_documents (docnumber);
+-- Unique constraint should be per business to avoid cross-business collisions
+create unique index if not exists uq_sales_documents_business_docnumber on public.sales_documents (businessid, docnumber);
 
 -- Helpful indexes similar to those added later by functions file
 create index if not exists idx_sales_documents_biz_type_issuedate_desc on public.sales_documents (businessid, type, issuedate desc);
@@ -74,6 +74,7 @@ create index if not exists idx_sales_documents_relatedreceiptid on public.sales_
 create table if not exists public.transactions (
   id uuid primary key default gen_random_uuid(),
   businessid uuid not null,
+  docnumber text,
   date timestamptz not null,
   description text not null,
   amount numeric not null default 0,
@@ -96,6 +97,9 @@ create table if not exists public.transactions (
   source_doc_id uuid,
   wht_rate numeric
 );
+
+-- Ensure transactions.docnumber has a unique index per business
+create unique index if not exists uq_transactions_business_docnumber on public.transactions (businessid, docnumber) where docnumber is not null;
 
 -- Indexes to speed up common queries used by RPCs
 create index if not exists idx_transactions_business_date on public.transactions (businessid, date desc) where isdeleted = false;
@@ -209,6 +213,56 @@ create policy "Allow delete transactions for business owner" on public.transacti
   );
 
 grant select, insert, update, delete on table public.transactions to authenticated;
+
+-- transaction_counters: per year counters for income/expense/cogs
+create table if not exists public.transaction_counters (
+  business_id uuid not null,
+  year int not null,
+  income_next_number integer not null default 1,
+  expense_next_number integer not null default 1,
+  cogs_next_number integer not null default 1,
+  updated_at timestamptz not null default now(),
+  primary key (business_id, year)
+);
+
+alter table public.transaction_counters enable row level security;
+drop policy if exists "Read tx_counters for business owner" on public.transaction_counters;
+create policy "Read tx_counters for business owner" on public.transaction_counters
+  for select using (
+    exists (
+      select 1 from public.businesses b
+      where b.id = transaction_counters.business_id
+        and b.ownerid = auth.uid()
+    )
+  );
+
+drop policy if exists "Insert tx_counters for business owner" on public.transaction_counters;
+create policy "Insert tx_counters for business owner" on public.transaction_counters
+  for insert with check (
+    exists (
+      select 1 from public.businesses b
+      where b.id = transaction_counters.business_id
+        and b.ownerid = auth.uid()
+    )
+  );
+
+drop policy if exists "Update tx_counters for business owner" on public.transaction_counters;
+create policy "Update tx_counters for business owner" on public.transaction_counters
+  for update using (
+    exists (
+      select 1 from public.businesses b
+      where b.id = transaction_counters.business_id
+        and b.ownerid = auth.uid()
+    )
+  ) with check (
+    exists (
+      select 1 from public.businesses b
+      where b.id = transaction_counters.business_id
+        and b.ownerid = auth.uid()
+    )
+  );
+
+grant select, insert, update on table public.transaction_counters to authenticated;
 
 -- categories: hierarchical categories for transactions (income/expense/cogs)
 create table if not exists public.categories (

@@ -35,8 +35,16 @@ const FormSection = ({ title, children }: { title: string; children: ReactNode }
 export default function TransactionForm({
     onSave, onClose, categories, businessId, transactionType, transactionToEdit, isEditOnly = false, initialData, isReadOnly = false
 }: TransactionFormProps) {
+    // Helper: local YYYY-MM-DD to avoid UTC off-by-one in some timezones
+    const getTodayLocalYMD = () => {
+        const d = new Date();
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+    };
 
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+    const [date, setDate] = useState(getTodayLocalYMD());
   const [description, setDescription] = useState('');
   const [mainCategoryId, setMainCategoryId] = useState('');
   const [subCategoryId, setSubCategoryId] = useState('');
@@ -118,7 +126,7 @@ export default function TransactionForm({
 
     const dataToLoad = transactionToEdit || initialData;
     if (dataToLoad) {
-        setDate(dataToLoad.date ? new Date(dataToLoad.date as any).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]);
+        setDate(dataToLoad.date ? new Date(dataToLoad.date as any).toISOString().split('T')[0] : getTodayLocalYMD());
     const desc = dataToLoad.description || '';
         const cleanedDesc = desc.replace(/ \(คู่ค้า: .*\)$/,'');
         setDescription(cleanedDesc);
@@ -150,7 +158,7 @@ export default function TransactionForm({
             setSubCategoryId('');
         }
     } else {
-        setDate(new Date().toISOString().split('T')[0]);
+        setDate(getTodayLocalYMD());
         setDescription('');
         setAmountInput('');
         setVatType('none');
@@ -312,7 +320,8 @@ export default function TransactionForm({
         }
 
     const data: Partial<Transaction> = {
-                date: new Date(date), 
+                // Persist as Date object; caller converts to ISO when inserting. Keep local date to avoid timezone drift.
+                date: new Date(`${date}T00:00:00`), 
                 description: finalDescription, 
         type: finalType, 
         category: finalCategoryName,

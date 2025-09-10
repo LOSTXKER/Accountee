@@ -18,7 +18,7 @@ export function useSalesDocuments(business_id: string) {
                 .from('sales_documents')
                 .select('*')
                 .eq('businessid', business_id)
-                .order('createdat', { ascending: false }); // เรียงตาม createdat เพื่อให้เห็นเอกสารที่สร้างล่าสุดก่อน
+                .order('created_at', { ascending: false }); // ใช้ created_at ตาม schema เพื่อเรียงเอกสารล่าสุดก่อน
 
             if (error) throw error;
             

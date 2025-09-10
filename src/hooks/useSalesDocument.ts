@@ -131,8 +131,23 @@ export function useSalesDocument() {
         }
     }, []);
 
-    // Helper: allocate a new document number using document_counters with optimistic CAS retry
+    // Helper: allocate a new document number, preferring server RPC (_next_docnumber),
+    // with fallback to document_counters using optimistic CAS retry
     const allocateDocumentNumber = useCallback(async (type: SalesDoc['type']): Promise<string> => {
+        // Prefer server-side generator to avoid scanning from client
+        try {
+            const issueIso = toISOString(issueDate) || new Date().toISOString();
+            const { data: nextDocNum, error: nextErr } = await supabase.rpc('_next_docnumber', {
+                p_business_id: businessId,
+                p_doc_type: type,
+                p_issue_date: issueIso,
+            });
+            if (!nextErr && typeof nextDocNum === 'string' && nextDocNum.length > 0) {
+                return nextDocNum;
+            }
+        } catch (_) {
+            // ignore and fallback
+        }
         // Fetch prefixes
         const currentYear = new Date().getFullYear();
         const { data: biz } = await supabase
@@ -188,7 +203,7 @@ export function useSalesDocument() {
         const field = fieldMap[type] as 'invoice_next_number' | 'quotation_next_number' | 'receipt_next_number';
 
         // CAS update retry loop
-        for (let attempt = 0; attempt < 5; attempt++) {
+    for (let attempt = 0; attempt < 5; attempt++) {
             let currentVal: number;
             if (attempt === 0 && counterRow && typeof counterRow[field] === 'number') {
                 currentVal = counterRow[field];
@@ -226,10 +241,29 @@ export function useSalesDocument() {
             return `${prefix}${numberPart}`;
         }
 
-        // Fallback if CAS failed repeatedly
-        const ts = Date.now().toString().slice(-4);
-        return `${prefix}${ts}`;
-    }, [businessId]);
+        // If CAS failed repeatedly, compute from existing sales_documents as a last-resort deterministic fallback
+        try {
+            const { data: rows } = await supabase
+                .from('sales_documents')
+                .select('docnumber')
+                .eq('businessid', businessId)
+                .ilike('docnumber', `${prefix}%`)
+                .order('docnumber', { ascending: false })
+                .limit(1);
+            let nextNum = 1;
+            if (rows && rows.length > 0) {
+                const last = (rows[0] as any).docnumber as string;
+                const tail = last.slice(-4);
+                const n = parseInt(tail, 10);
+                if (!isNaN(n)) nextNum = n + 1;
+            }
+            return `${prefix}${String(nextNum).padStart(4, '0')}`;
+        } catch {
+            // Ultimate fallback: timestamp suffix
+            const ts = Date.now().toString().slice(-4);
+            return `${prefix}${ts}`;
+        }
+    }, [businessId, issueDate]);
 
     const fetchDocument = useCallback(async () => {
         if (!docId) return;
@@ -419,6 +453,87 @@ export function useSalesDocument() {
         } as any;
         
         try {
+            // Helper: fallback path that creates the document directly with a unique allocated number
+            const createDocumentDirectly = async (): Promise<string> => {
+                // Try a few times in case of racing unique numbers
+                for (let attempt = 0; attempt < 5; attempt++) {
+                    const generatedDocNumber = await allocateDocumentNumber(docType);
+                    // Try direct insert with DB no-underscore column names
+                    const insertNoUnderscore: any = {
+                        businessid: businessId,
+                        type: docType,
+                        docnumber: generatedDocNumber,
+                        customername: manualCustomerName.trim(),
+                        customeraddress: customerAddress.trim(),
+                        issuedate: actualIssueDate,
+                        items,
+                        subtotal: totals.subtotal,
+                        discountamount: discountAmount,
+                        vatamount: totals.vatAmount,
+                        withholdingtaxamount: withholdingTaxAmount,
+                        grandtotal: totals.grandTotal,
+                        status: finalStatus,
+                        notes: docData?.notes || ''
+                    };
+                    if (docType === 'invoice') {
+                        (insertNoUnderscore as any).duedate = toISOString(dueDate || actualIssueDate);
+                    } else {
+                        (insertNoUnderscore as any).expirydate = toISOString(expiryDate || actualIssueDate);
+                    }
+
+                    const { data, error: directInsertError } = await supabase
+                        .from('sales_documents')
+                        .insert(insertNoUnderscore)
+                        .select('id')
+                        .single();
+                    if (directInsertError) {
+                        const code = (directInsertError as PostgrestError)?.code || '';
+                        const msg = (directInsertError as PostgrestError)?.message || '';
+                        const isDup = code === '23505' || msg.toLowerCase().includes('duplicate key value') || msg.includes('uq_sales_documents_docnumber');
+                        if (isDup) {
+                            // Retry with a new number
+                            await new Promise(res => setTimeout(res, 80));
+                            continue;
+                        }
+                        throw directInsertError;
+                    }
+
+                    const newDocId = data!.id as string;
+
+                // Link back to source when creating from a quotation to prevent duplicates.
+                if (sourceDocId && docType === 'invoice') {
+                    try {
+                        await updateSalesDocWithFallback(sourceDocId, [
+                            { converted_to_invoice_id: newDocId },
+                            { relatedinvoiceid: newDocId }
+                        ]);
+                    } catch (e) {
+                        console.error('Failed to link quotation to invoice:', e);
+                    }
+                }
+
+                        if (docType === 'receipt' && finalStatus === 'ชำระแล้ว') {
+                    // Link both directions: invoice -> receipt, and receipt -> invoice
+                    if (sourceDocId) {
+                        try {
+                            await updateSalesDocWithFallback(sourceDocId, [
+                                { status: 'ชำระแล้ว', relatedreceiptid: newDocId }
+                            ]);
+                            await updateSalesDocWithFallback(newDocId, [
+                                { relatedinvoiceid: sourceDocId }
+                            ]);
+                        } catch (e) {
+                            console.error('Failed to link receipt to invoice (fallback path):', e);
+                        }
+                    }
+                }
+
+                return newDocId;
+                }
+                // If we got here, all attempts failed due to duplicates
+                throw new Error('ไม่สามารถสร้างเลขที่เอกสารใหม่ได้ (ชนซ้ำหลายครั้ง)');
+            };
+
             if (mode === 'edit' && docId) {
                 // Strict forward-lock enforcement for existing docs
                 if (docData && await isForwardLocked(docData)) {
@@ -465,6 +580,7 @@ export function useSalesDocument() {
                     // If the RPC does not exist on this Supabase project, fall back to a direct insert
                     const msg = (error as PostgrestError)?.message || '';
                     const code = (error as PostgrestError)?.code || '';
+                    const isUniqueViolation = code === '23505' || msg.toLowerCase().includes('duplicate key value') || msg.includes('uq_sales_documents_docnumber');
                     // Also handle HTTP 404 wrapped errors from PostgREST
                     const looksLikeMissing = code === 'PGRST202' 
                         || code === '42883' 
@@ -474,120 +590,77 @@ export function useSalesDocument() {
                         || msg.toLowerCase().includes('rpc create_sales_document');
                     if (looksLikeMissing) {
                         console.log("Using fallback direct insert method");
-                        // Allocate a counter-based document number (fallback path)
-                        const generatedDocNumber = await allocateDocumentNumber(docType);
-                        
-                        // Try direct insert with DB no-underscore column names
-                        const insertNoUnderscore: any = {
-                            businessid: businessId,
-                            type: docType,
-                            docnumber: generatedDocNumber,
-                            customername: manualCustomerName.trim(),
-                            customeraddress: customerAddress.trim(),
-                            issuedate: actualIssueDate,
-                            items,
-                            subtotal: totals.subtotal,
-                            discountamount: discountAmount,
-                            vatamount: totals.vatAmount,
-                            withholdingtaxamount: withholdingTaxAmount,
-                            grandtotal: totals.grandTotal,
-                            status: finalStatus,
-                            notes: docData?.notes || ''
-                        };
-                        if (docType === 'invoice') {
-                            (insertNoUnderscore as any).duedate = toISOString(dueDate || actualIssueDate);
-                        } else {
-                            (insertNoUnderscore as any).expirydate = toISOString(expiryDate || actualIssueDate);
-                        }
-
-                        const { data, error: directInsertError } = await supabase
-                            .from('sales_documents')
-                            .insert(insertNoUnderscore)
-                            .select('id')
-                            .single();
-                        
-                        if (directInsertError) throw directInsertError;
-                        
-                        const newDocId = data.id;
-                        // Link back to source when creating from a quotation to prevent duplicates.
-                        if (sourceDocId && docType === 'invoice') {
-                            try {
-                                await updateSalesDocWithFallback(sourceDocId, [
-                                    { converted_to_invoice_id: newDocId },
-                                    { relatedinvoiceid: newDocId }
-                                ]);
-                            } catch (e) {
-                                console.error('Failed to link quotation to invoice:', e);
-                            }
-                        }
-                        if (docType === 'receipt' && finalStatus === 'ชำระแล้ว') {
-                            // Link both directions: invoice -> receipt, and receipt -> invoice
-                            if (sourceDocId) {
-                                try {
-                                    await updateSalesDocWithFallback(sourceDocId, [
-                                        { status: 'ชำระแล้ว', relatedreceiptid: newDocId }
-                                    ]);
-                                    await updateSalesDocWithFallback(newDocId, [
-                                        { relatedinvoiceid: sourceDocId }
-                                    ]);
-                                } catch (e) {
-                                    console.error('Failed to link receipt to invoice (fallback path):', e);
-                                }
-                            }
-                            // Auto-create income transaction for this receipt (direct-insert path)
-                            try {
-                                // Fetch receipt details for docnumber and related invoice
-                                const { data: receiptRow } = await supabase
-                                    .from('sales_documents')
-                                    .select('id, docnumber, customername, issuedate, withholdingtaxamount, vatamount, subtotal, discountamount, grandtotal, relatedinvoiceid')
-                                    .eq('id', newDocId)
-                                    .single();
-
-                                // สร้าง income transaction สำหรับใบเสร็จนี้
-                                const txStatus: TransactionStatus = (Number((receiptRow as any)?.withholdingtaxamount || withholdingTaxAmount || 0) > 0)
-                                    ? 'รอรับ หัก ณ ที่จ่าย'
-                                    : 'เสร็จสมบูรณ์';
-                                const description = `รายรับจากใบเสร็จ ${receiptRow?.docnumber || ''} (คู่ค้า: ${receiptRow?.customername || manualCustomerName.trim()})`;
-
-                                const insertTx: Partial<Transaction> & { date: string } = {
-                                    businessid: businessId,
-                                    date: toISOString((receiptRow as any)?.issuedate || issueDate)!,
-                                    description,
-                                    amount: Number((receiptRow as any)?.grandtotal ?? totals.grandTotal),
-                                    type: 'income',
-                                    category: 'รายได้จากการให้บริการ',
-                                    status: txStatus,
-                                    attachment_status: 'none',
-                                    vattype: 'include' as VatType,
-                                    subtotal: Number((receiptRow as any)?.subtotal ?? Math.max(0, totals.subtotal - discountAmount)),
-                                    vatamount: Number((receiptRow as any)?.vatamount ?? totals.vatAmount),
-                                    withholdingtax: Number((receiptRow as any)?.withholdingtaxamount ?? (withholdingTaxAmount || 0)),
-                                    isdeleted: false,
-                                    // ลบ source_doc_id และ created_at ที่ไม่มีใน schema
-                                } as any;
-
-                                const { data: txInserted, error: txErr } = await supabase
-                                    .from('transactions')
-                                    .insert(insertTx as any)
-                                    .select('id')
-                                    .single();
-                                if (!txErr && txInserted?.id && sourceDocId) {
-                                    // Link transaction back to invoice for traceability (best-effort, handle both column styles)
-                                    try {
-                                        await updateSalesDocWithFallback(sourceDocId, [
-                                            { relatedtransactionid: txInserted.id },
-                                            { related_transaction_id: txInserted.id },
-                                        ]);
-                                    } catch {}
-                                }
-                            } catch (e) {
-                                console.error('Auto-create income transaction (fallback path) failed:', e);
-                            }
-                        }
-
+                        const newDocId = await createDocumentDirectly();
                         // อัปเดต issueDate ในฟอร์มให้ตรงกับวันที่ที่บันทึกจริงในฐานข้อมูล
                         setIssueDate(new Date(currentDateTime).toISOString().split('T')[0]);
+                        router.push(`/dashboard/${businessId}/sales/${newDocId}`);
+                        return;
+                    }
 
+                    if (isUniqueViolation) {
+                        // Retry the RPC a couple of times in case of concurrent numbering, then fallback
+                        for (let attempt = 0; attempt < 2; attempt++) {
+                            await new Promise(res => setTimeout(res, 120));
+                            const { data: retried, error: retryErr } = await supabase.rpc('create_sales_document', {
+                                p_business_id: businessId,
+                                p_doc_type: docType,
+                                p_common_data: commonDataDb,
+                                p_due_date: toISOString(dueDate || actualIssueDate),
+                                p_expiry_date: toISOString(expiryDate || actualIssueDate),
+                                p_source_doc_id: sourceDocId,
+                                p_customername: manualCustomerName.trim(),
+                                p_customeraddress: customerAddress.trim(),
+                                p_issuedate: actualIssueDate,
+                                p_subtotal: totals.subtotal,
+                                p_discountamount: discountAmount,
+                                p_vatamount: totals.vatAmount,
+                                p_withholdingtaxamount: withholdingTaxAmount,
+                                p_grandtotal: totals.grandTotal,
+                                p_status: finalStatus,
+                                p_notes: docData?.notes || '',
+                                p_items: items
+                            });
+                            if (!retryErr && retried?.id) {
+                                const newId = retried.id as string;
+                                if (sourceDocId && docType === 'invoice') {
+                                    try {
+                                        await updateSalesDocWithFallback(sourceDocId, [
+                                            { converted_to_invoice_id: newId },
+                                            { relatedinvoiceid: newId }
+                                        ]);
+                                    } catch (e) {
+                                        console.error('Failed to link quotation to invoice (RPC retry path):', e);
+                                    }
+                                }
+                                if (docType === 'receipt' && finalStatus === 'ชำระแล้ว') {
+                                    if (sourceDocId) {
+                                        try {
+                                            await updateSalesDocWithFallback(sourceDocId, [
+                                                { status: 'ชำระแล้ว', relatedreceiptid: newId }
+                                            ]);
+                                            await updateSalesDocWithFallback(newId, [
+                                                { relatedinvoiceid: sourceDocId }
+                                            ]);
+                                        } catch (e) {
+                                            console.error('Failed to link receipt to invoice (RPC retry path):', e);
+                                        }
+                                    }
+                                }
+                                if (mode === 'new') {
+                                    setIssueDate(new Date(currentDateTime).toISOString().split('T')[0]);
+                                }
+                                router.push(`/dashboard/${businessId}/sales/${newId}`);
+                                return;
+                            }
+                            // If it's no longer a unique violation, break and throw
+                            const rCode = (retryErr as PostgrestError)?.code || '';
+                            const rMsg = (retryErr as PostgrestError)?.message || '';
+                            const stillUnique = rCode === '23505' || rMsg.toLowerCase().includes('duplicate key value') || rMsg.includes('uq_sales_documents_docnumber');
+                            if (!stillUnique) break;
+                        }
+                        // Fallback to direct insert if still failing with unique violation
+                        const newDocId = await createDocumentDirectly();
+                        setIssueDate(new Date(currentDateTime).toISOString().split('T')[0]);
                         router.push(`/dashboard/${businessId}/sales/${newDocId}`);
                         return;
                     }
@@ -621,59 +694,6 @@ export function useSalesDocument() {
                         } catch (e) {
                             console.error('Failed to link receipt to invoice (RPC path):', e);
                         }
-                    }
-                    // Auto-create income transaction for this receipt (RPC path)
-                    try {
-                        // Fetch receipt details for docnumber and customer
-                        const { data: receiptRow } = await supabase
-                            .from('sales_documents')
-                            .select('id, docnumber, customername, issuedate, subtotal, discountamount, vatamount, withholdingtaxamount, grandtotal')
-                            .eq('id', newDocId)
-                            .single();
-
-                        // สร้าง income transaction สำหรับใบเสร็จนี้
-                        const txStatus: TransactionStatus = (Number((receiptRow as any)?.withholdingtaxamount || withholdingTaxAmount || 0) > 0)
-                            ? 'รอรับ หัก ณ ที่จ่าย'
-                            : 'เสร็จสมบูรณ์';
-
-                        const description = `รายรับจากใบเสร็จ ${receiptRow?.docnumber || ''} (คู่ค้า: ${receiptRow?.customername || manualCustomerName.trim()})`;
-
-                        const insertTx: Partial<Transaction> & { date: string } = {
-                            businessid: businessId,
-                            date: toISOString((receiptRow as any)?.issuedate || issueDate)!,
-                            description,
-                            amount: Number((receiptRow as any)?.grandtotal ?? totals.grandTotal),
-                            type: 'income',
-                            category: 'รายได้จากการให้บริการ',
-                            status: txStatus,
-                            attachment_status: 'none',
-                            vattype: 'include' as VatType,
-                            subtotal: Number((receiptRow as any)?.subtotal ?? Math.max(0, totals.subtotal - discountAmount)),
-                            vatamount: Number((receiptRow as any)?.vatamount ?? totals.vatAmount),
-                            withholdingtax: Number((receiptRow as any)?.withholdingtaxamount ?? (withholdingTaxAmount || 0)),
-                            isdeleted: false,
-                            // ลบ source_doc_id และ created_at ที่ไม่มีใน schema
-                        } as any;
-
-                        const { data: txInserted, error: txErr } = await supabase
-                            .from('transactions')
-                            .insert(insertTx as any)
-                            .select('id')
-                            .single();
-                        if (!txErr && txInserted?.id && sourceDocId) {
-                            // Link transaction id on related invoice (best-effort)
-                            try {
-                                await updateSalesDocWithFallback(sourceDocId, [
-                                    { relatedtransactionid: txInserted.id },
-                                    { related_transaction_id: txInserted.id },
-                                ]);
-                            } catch {}
-                        } else if (sourceDocId) {
-                            // ensure invoice link if missed (แม้ไม่มี transaction)
-                            try { await updateSalesDocWithFallback(sourceDocId, [{ relatedtransactionid: null }, { related_transaction_id: null }]); } catch {}
-                        }
-                    } catch (e) {
-                        console.error('Auto-create income transaction (RPC path) failed:', e);
                     }
                 }
 
