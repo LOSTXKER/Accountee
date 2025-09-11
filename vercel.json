@@ -1,4 +1,4 @@
 {
-  "disabled": true,
-  "note": "CI/CD removed. This file is kept minimal to avoid Vercel auto settings."
+  "version": 2,
+  "framework": "nextjs"
 }
