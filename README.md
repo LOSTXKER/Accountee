@@ -213,8 +213,7 @@ Your app is already configured for Vercel deployment!
      ```
 
 2. **Deploy**
-   - Push any commit to GitHub to trigger auto-deployment
-   - Or use: `vercel --prod` from command line
+   - Use: `vercel --prod` from command line
    - Or manually redeploy from Vercel dashboard
 
 3. **Live URL**: Your app will be available at:
@@ -232,18 +231,7 @@ Your app is already configured for Vercel deployment!
 3. Configure environment variables
 4. Set up Supabase connection
 
-### GitHub Actions → Vercel
-This repo includes `.github/workflows/vercel-deploy.yml` which deploys on pushes to `main`.
-
-Add repository secrets in GitHub → Settings → Secrets and variables → Actions:
-- `VERCEL_TOKEN`
-- `VERCEL_ORG_ID`
-- `VERCEL_PROJECT_ID`
-
-Ensure your Vercel project has these Environment Variables (Production/Preview/Dev):
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-- `SUPABASE_SERVICE_ROLE_KEY`
+<!-- CI/CD via GitHub Actions has been removed. Deploy manually via Vercel CLI or dashboard. -->
 
 ## 🔒 Security Features
 

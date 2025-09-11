@@ -1,13 +1,4 @@
 {
-  "framework": "nextjs",
-  "buildCommand": "npm run build",
-  "devCommand": "npm run dev",
-  "installCommand": "npm install",
-  "outputDirectory": ".next",
-  "functions": {
-    "app/api/**/*.ts": {
-      "maxDuration": 30
-    }
-  },
-  "regions": ["sin1"]
+  "disabled": true,
+  "note": "CI/CD removed. This file is kept minimal to avoid Vercel auto settings."
 }
