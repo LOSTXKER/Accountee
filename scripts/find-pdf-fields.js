@@ -10,7 +10,6 @@ async function getPdfFields() {
 
     if (!fs.existsSync(pdfPath)) {
       console.error('Error: PDF file not found at the specified path.');
-      console.error('Please make sure "approve_wh3_081156.pdf" is in the "public" directory.');
       return;
     }
 
@@ -20,7 +19,7 @@ async function getPdfFields() {
     const fields = form.getFields();
 
     if (fields.length === 0) {
-        console.log('No fillable fields found in this PDF. It might not be a form, or the fields are not standard AcroForm fields.');
+        console.log('No fillable fields found in this PDF.');
         return;
     }
 
@@ -31,7 +30,7 @@ async function getPdfFields() {
       console.log(`- Name: "${name}", Type: ${type}`);
     });
     console.log('-----------------------------');
-    console.log('\nPlease copy the list of field names above and provide it to me.');
+    console.log('\nPlease copy the list of field names above and use them in the route.ts file.');
 
   } catch (error) {
     console.error('An error occurred:', error);

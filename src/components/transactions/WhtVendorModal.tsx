@@ -28,6 +28,8 @@ export default function WhtVendorModal({ isOpen, onClose, businessId, transactio
   const [isAddingNew, setIsAddingNew] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [autoResolved, setAutoResolved] = useState(false);
+  const [whtCategory, setWhtCategory] = useState('ค่าบริการ'); // เพิ่ม state สำหรับประเภท WHT
+  const [pndType, setPndType] = useState('ภ.ง.ด.53'); // เพิ่ม state สำหรับ PND type
 
   const [formState, setFormState] = useState({
       contactType: 'corporate' as 'corporate' | 'individual',
@@ -46,6 +48,8 @@ export default function WhtVendorModal({ isOpen, onClose, businessId, transactio
       setIsAddingNew(false);
       setIsProcessing(false);
       setAutoResolved(false);
+      setWhtCategory('ค่าบริการ'); // รีเซ็ต WHT category เป็นค่าเริ่มต้น
+      setPndType('ภ.ง.ด.53'); // รีเซ็ต PND type เป็นค่าเริ่มต้น
       setFormState({
         contactType: 'corporate', legalEntityType: 'บริษัทจำกัด', companyName: '', branchType: 'main',
         branch_number: '', prefix: 'นาย', firstName: '', lastName: '', taxId: '', 
@@ -82,6 +86,33 @@ export default function WhtVendorModal({ isOpen, onClose, businessId, transactio
   const customerOptions: SelectOption[] = [
     ...customers.map(c => ({ value: c.id, label: c.name })),
     { value: 'add_new', label: <span className="text-blue-600 font-bold flex items-center gap-2"><Plus size={14} /> เพิ่มผู้ติดต่อใหม่</span> }
+  ];
+
+  // ตัวเลือกประเภทการหัก ณ ที่จ่าย
+  const whtCategoryOptions: SelectOption[] = [
+    { value: 'เงินเดือน ค่าจ้าง', label: 'เงินเดือน ค่าจ้าง' },
+    { value: 'ค่าธรรมเนียม ค่านายหน้า', label: 'ค่าธรรมเนียม ค่านายหน้า' },
+    { value: 'ค่าแห่งลิขสิทธิ์', label: 'ค่าแห่งลิขสิทธิ์' },
+    { value: 'ค่าดอกเบี้ย', label: 'ค่าดอกเบี้ย' },
+    { value: 'เงินปันผล', label: 'เงินปันผล' },
+    { value: 'ค่าเช่า', label: 'ค่าเช่า' },
+    { value: 'ค่าวิชาชีพอิสระ', label: 'ค่าวิชาชีพอิสระ' },
+    { value: 'ค่ารับเหมา', label: 'ค่ารับเหมา' },
+    { value: 'ค่าบริการ', label: 'ค่าบริการ' },
+    { value: 'ค่าโฆษณา', label: 'ค่าโฆษณา' },
+    { value: 'ค่าขนส่ง', label: 'ค่าขนส่ง' },
+    { value: 'อื่นๆ', label: 'อื่นๆ' },
+  ];
+
+  // ตัวเลือกประเภทแบบแสดงรายการภาษี (ภ.ง.ด.)
+  const pndTypeOptions: SelectOption[] = [
+    { value: 'ภ.ง.ด.1ก', label: 'ภ.ง.ด.1ก' },
+    { value: 'ภ.ง.ด.1ก พิเศษ', label: 'ภ.ง.ด.1ก พิเศษ' },
+    { value: 'ภ.ง.ด.2', label: 'ภ.ง.ด.2' },
+    { value: 'ภ.ง.ด.3', label: 'ภ.ง.ด.3' },
+    { value: 'ภ.ง.ด.53', label: 'ภ.ง.ด.53' },
+    { value: 'ภ.ง.ด.2ก', label: 'ภ.ง.ด.2ก' },
+    { value: 'ภ.ง.ด.3ก', label: 'ภ.ง.ด.3ก' },
   ];
 
   const handleCustomerSelect = (customerId: string) => {
@@ -157,7 +188,12 @@ export default function WhtVendorModal({ isOpen, onClose, businessId, transactio
     const response = await fetch('/api/generate-wht-certificate', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ transactionId: transaction.id, vendorData }),
+            body: JSON.stringify({ 
+              transactionId: transaction.id, 
+              vendorData,
+              whtCategory: whtCategory, // ส่งประเภท WHT ไปด้วย
+              pndType: pndType // ส่งประเภท PND ไปด้วย
+            }),
         });
 
     const resJson = await response.json();
@@ -183,6 +219,40 @@ export default function WhtVendorModal({ isOpen, onClose, businessId, transactio
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="สร้างหนังสือรับรองหัก ณ ที่จ่าย" size="5xl">
       <div className="space-y-4">
+        {/* ส่วนเลือกประเภท WHT */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            ประเภทเงินได้ที่หัก ณ ที่จ่าย <span className="text-red-500">*</span>
+          </label>
+          <Select
+            value={whtCategory}
+            onChange={setWhtCategory}
+            options={whtCategoryOptions}
+            placeholder="เลือกประเภทเงินได้"
+            disabled={isProcessing}
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            เลือกประเภทเงินได้เพื่อให้การสร้างเอกสารถูกต้องตามกฎหมาย
+          </p>
+        </div>
+
+        {/* ส่วนเลือกประเภทแบบแสดงรายการภาษี */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            ประเภทแบบแสดงรายการภาษี <span className="text-red-500">*</span>
+          </label>
+          <Select
+            value={pndType}
+            onChange={setPndType}
+            options={pndTypeOptions}
+            placeholder="เลือกประเภท ภ.ง.ด."
+            disabled={isProcessing}
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            เลือกแบบแสดงรายการภาษีที่ต้องการใช้ (โดยทั่วไปใช้ ภ.ง.ด.53)
+          </p>
+        </div>
+
         {autoCustomer ? (
           <div className="rounded-lg border p-3 bg-slate-50">
             <p className="text-sm text-slate-600 mb-2">สำหรับผู้รับเงิน (ผู้ถูกหักภาษี)</p>

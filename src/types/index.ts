@@ -112,6 +112,8 @@ export interface Transaction {
   pending_documents?: PendingDocument[];
   withholdingtax_rate?: number | null;
   withholdingtax?: number | null;
+  wht_category?: string | null; // ประเภทการหัก ณ ที่จ่าย
+  pnd_type?: string | null; // ประเภทแบบแสดงรายการภาษี (ภ.ง.ด.)
   wht_certificate_attachment?: Attachment | null;
   isdeleted?: boolean;
   created_at: string;

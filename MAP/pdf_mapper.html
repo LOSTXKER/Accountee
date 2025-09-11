@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Coordinate Mapper</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.min.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        #pdf-canvas {
+            cursor: crosshair;
+            border: 2px solid #3b82f6;
+        }
+        .marker {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            background: rgba(255, 0, 0, 0.5);
+            border: 1px solid red;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 10px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+    <div class="container mx-auto p-4 lg:p-8">
+        <header class="text-center mb-8">
+            <h1 class="text-3xl lg:text-4xl font-bold text-gray-900">PDF Coordinate Mapper 🗺️</h1>
+            <p class="text-gray-600 mt-2">เครื่องมือช่วยหาตำแหน่ง (X, Y) บนไฟล์ PDF สำหรับหนังสือรับรองหัก ณ ที่จ่าย</p>
+        </header>
+
+        <div class="flex flex-col lg:flex-row gap-8">
+            <!-- PDF Viewer Section -->
+            <main class="w-full lg:w-2/3 bg-white p-4 rounded-lg shadow-lg">
+                <div id="pdf-container" class="relative w-full overflow-auto border rounded-md">
+                     <canvas id="pdf-canvas"></canvas>
+                </div>
+            </main>
+
+            <!-- Controls and Coordinates Section -->
+            <aside class="w-full lg:w-1/3 bg-white p-6 rounded-lg shadow-lg self-start">
+                <div class="sticky top-8">
+                    <h2 class="text-2xl font-bold mb-4 border-b pb-2">Control Panel</h2>
+
+                    <!-- Live Coordinates -->
+                    <div class="bg-blue-50 border border-blue-200 p-4 rounded-md mb-6">
+                        <h3 class="font-semibold text-lg text-blue-800 mb-2">Live Coordinates</h3>
+                        <p class="text-2xl font-mono">
+                            X: <span id="coord-x" class="font-bold text-blue-600">0</span>,
+                            Y: <span id="coord-y" class="font-bold text-blue-600">0</span>
+                        </p>
+                        <p class="text-xs text-gray-500 mt-1">นี่คือค่า (x, y) ที่จะนำไปใช้ในโค้ด `drawText(text, x, y)`</p>
+                    </div>
+
+                    <!-- Saved Coordinates -->
+                    <div>
+                        <h3 class="font-semibold text-lg text-gray-800 mb-3">Saved Mappings</h3>
+                        <div id="saved-coords-list" class="space-y-2 max-h-60 overflow-y-auto pr-2">
+                           <p class="text-gray-500 text-sm">คลิกบน PDF เพื่อเริ่มบันทึกตำแหน่ง...</p>
+                        </div>
+                    </div>
+                    
+                    <!-- Code Generator -->
+                    <div class="mt-6">
+                         <button id="generate-code-btn" class="w-full bg-green-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-green-700 transition duration-300 disabled:bg-gray-400 disabled:cursor-not-allowed">
+                            Generate Code Snippet
+                        </button>
+                        <div id="code-output-container" class="hidden mt-4">
+                            <textarea id="code-output" readonly class="w-full h-48 p-2 border rounded-md bg-gray-900 text-white font-mono text-xs"></textarea>
+                            <button id="copy-code-btn" class="w-full mt-2 bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 transition">
+                                Copy Code
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+        </div>
+    </div>
+
+    <!-- Modal for Naming Coordinate -->
+    <div id="name-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center">
+        <div class="bg-white p-6 rounded-lg shadow-xl w-96">
+            <h3 class="text-xl font-bold mb-4">Name this Coordinate</h3>
+            <p class="mb-2 text-sm">ตั้งชื่อสำหรับตำแหน่ง (X: <span id="modal-x"></span>, Y: <span id="modal-y"></span>)</p>
+            <input type="text" id="coord-name-input" class="w-full border p-2 rounded-md" placeholder="e.g., payer_name, total_amount">
+            <div class="mt-4 flex justify-end gap-2">
+                <button id="cancel-name-btn" class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded">Cancel</button>
+                <button id="save-name-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">Save</button>
+            </div>
+        </div>
+    </div>
+
+
+    <script>
+        // Set the path to the PDF worker script
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.worker.min.js`;
+
+        const pdfUrl = './approve_wh3_081156 (1).pdf';
+        
+        const canvas = document.getElementById('pdf-canvas');
+        const ctx = canvas.getContext('2d');
+        const pdfContainer = document.getElementById('pdf-container');
+
+        const xCoordSpan = document.getElementById('coord-x');
+        const yCoordSpan = document.getElementById('coord-y');
+        const savedCoordsList = document.getElementById('saved-coords-list');
+        
+        const nameModal = document.getElementById('name-modal');
+        const modalX = document.getElementById('modal-x');
+        const modalY = document.getElementById('modal-y');
+        const coordNameInput = document.getElementById('coord-name-input');
+        const cancelNameBtn = document.getElementById('cancel-name-btn');
+        const saveNameBtn = document.getElementById('save-name-btn');
+
+        const generateCodeBtn = document.getElementById('generate-code-btn');
+        const codeOutputContainer = document.getElementById('code-output-container');
+        const codeOutput = document.getElementById('code-output');
+        const copyCodeBtn = document.getElementById('copy-code-btn');
+
+        let tempCoords = { x: 0, y: 0 };
+        let savedCoords = [];
+        let scale = 1.5;
+
+        // Render PDF
+        pdfjsLib.getDocument(pdfUrl).promise.then(pdf => {
+            return pdf.getPage(1);
+        }).then(page => {
+            const viewport = page.getViewport({ scale });
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+
+            const renderContext = {
+                canvasContext: ctx,
+                viewport: viewport
+            };
+            page.render(renderContext);
+        });
+
+        function updateLiveCoords(e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = Math.round((e.clientX - rect.left) / scale);
+            const y = Math.round((e.clientY - rect.top) / scale);
+            xCoordSpan.textContent = x;
+            yCoordSpan.textContent = y;
+        }
+
+        canvas.addEventListener('mousemove', updateLiveCoords);
+
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            tempCoords.x = Math.round((e.clientX - rect.left) / scale);
+            tempCoords.y = Math.round((e.clientY - rect.top) / scale);
+            
+            modalX.textContent = tempCoords.x;
+            modalY.textContent = tempCoords.y;
+            coordNameInput.value = '';
+            nameModal.style.display = 'flex';
+            coordNameInput.focus();
+        });
+
+        // Modal Logic
+        function closeModal() {
+            nameModal.style.display = 'none';
+        }
+
+        cancelNameBtn.addEventListener('click', closeModal);
+        saveNameBtn.addEventListener('click', () => {
+            const name = coordNameInput.value.trim();
+            if (name) {
+                savedCoords.push({ name, x: tempCoords.x, y: tempCoords.y });
+                updateSavedList();
+                closeModal();
+            }
+        });
+
+        // Update UI list
+        function updateSavedList() {
+            savedCoordsList.innerHTML = '';
+            if (savedCoords.length === 0) {
+                 savedCoordsList.innerHTML = '<p class="text-gray-500 text-sm">คลิกบน PDF เพื่อเริ่มบันทึกตำแหน่ง...</p>';
+                 generateCodeBtn.disabled = true;
+                 return;
+            }
+
+            generateCodeBtn.disabled = false;
+            savedCoords.forEach((coord, index) => {
+                const div = document.createElement('div');
+                div.className = 'flex justify-between items-center bg-gray-50 p-2 rounded-md border';
+                div.innerHTML = `
+                    <span class="font-semibold">${coord.name}</span>
+                    <span class="font-mono text-sm">X:${coord.x}, Y:${coord.y}</span>
+                    <button data-index="${index}" class="remove-btn text-red-500 hover:text-red-700">&times;</button>
+                `;
+                savedCoordsList.appendChild(div);
+
+                 // Add marker on canvas
+                const marker = document.createElement('div');
+                marker.className = 'marker';
+                marker.style.left = `${coord.x * scale}px`;
+                marker.style.top = `${coord.y * scale}px`;
+                marker.textContent = index + 1;
+                pdfContainer.appendChild(marker);
+            });
+
+            // Add remove functionality
+            document.querySelectorAll('.remove-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const indexToRemove = parseInt(e.target.dataset.index);
+                    savedCoords.splice(indexToRemove, 1);
+                    // Clear old markers before updating
+                     pdfContainer.querySelectorAll('.marker').forEach(m => m.remove());
+                    updateSavedList();
+                });
+            });
+        }
+        
+        generateCodeBtn.addEventListener('click', () => {
+            let code = `// 3. Draw all data onto the template\n\n`;
+            savedCoords.forEach(c => {
+                 code += `drawText('Sample Text for ${c.name}', ${c.x}, ${c.y}); // ${c.name}\n`;
+            });
+            codeOutput.value = code;
+            codeOutputContainer.style.display = 'block';
+        });
+
+        copyCodeBtn.addEventListener('click', () => {
+            codeOutput.select();
+            document.execCommand('copy');
+            copyCodeBtn.textContent = 'Copied!';
+            setTimeout(() => {
+                copyCodeBtn.textContent = 'Copy Code';
+            }, 2000);
+        });
+
+        updateSavedList(); // Initial call
+    </script>
+</body>
+</html>
