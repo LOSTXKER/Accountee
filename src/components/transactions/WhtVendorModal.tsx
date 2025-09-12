@@ -30,6 +30,7 @@ export default function WhtVendorModal({ isOpen, onClose, businessId, transactio
   const [autoResolved, setAutoResolved] = useState(false);
   const [whtCategory, setWhtCategory] = useState('ค่าบริการ'); // เพิ่ม state สำหรับประเภท WHT
   const [pndType, setPndType] = useState('ภ.ง.ด.53'); // เพิ่ม state สำหรับ PND type
+  const [smartSuggestions, setSmartSuggestions] = useState<{ pndType: string; whtCategory: string } | null>(null);
 
   const [formState, setFormState] = useState({
       contactType: 'corporate' as 'corporate' | 'individual',
@@ -42,6 +43,33 @@ export default function WhtVendorModal({ isOpen, onClose, businessId, transactio
   const handleFormChange = useCallback((field: string, value: any) => { setFormState(prev => ({ ...prev, [field]: value })); }, []);
   const handleTaxIdChange = useCallback((value: string) => { setFormState(prev => ({...prev, taxId: value})); }, []);
 
+  // 🤖 Fetch Smart Suggestions
+  const fetchSmartSuggestions = useCallback(async () => {
+    if (!transaction || !isOpen) return;
+    
+    try {
+      // ส่ง POST เพื่อให้ระบบวิเคราะห์และแนะนำ แต่ยังไม่สร้างเอกสารจริง
+      const response = await fetch('/api/generate-wht-certificate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transactionId: transaction.id,
+          vendorData: { name: 'temp', address: 'temp', taxId: 'temp' },
+          previewMode: true // โหมดดูตัวอย่าง เพื่อให้ระบบแนะนำเท่านั้น
+        })
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setSmartSuggestions(data.suggestions);
+        setWhtCategory(data.suggestions?.whtCategory || 'ค่าบริการ');
+        setPndType(data.suggestions?.pndType || 'ภ.ง.ด.53');
+      }
+    } catch (error) {
+      console.log('Failed to fetch smart suggestions:', error);
+    }
+  }, [transaction, isOpen]);
+
   useEffect(() => {
     if (!isOpen) {
       setSelectedCustomerId('');
@@ -50,14 +78,18 @@ export default function WhtVendorModal({ isOpen, onClose, businessId, transactio
       setAutoResolved(false);
       setWhtCategory('ค่าบริการ'); // รีเซ็ต WHT category เป็นค่าเริ่มต้น
       setPndType('ภ.ง.ด.53'); // รีเซ็ต PND type เป็นค่าเริ่มต้น
+      setSmartSuggestions(null);
       setFormState({
         contactType: 'corporate', legalEntityType: 'บริษัทจำกัด', companyName: '', branchType: 'main',
         branch_number: '', prefix: 'นาย', firstName: '', lastName: '', taxId: '', 
         contactPerson: '', streetAddress: '', subdistrict: '', district: '', 
         province: '', postalCode: '', email: '', phone: '', website: '', fax: '',
       });
+    } else {
+      // เมื่อเปิด modal ให้เรียก Smart Suggestions
+      fetchSmartSuggestions();
     }
-  }, [isOpen]);
+  }, [isOpen, fetchSmartSuggestions]);
 
   // Auto-detect contact from transaction.description suffix: (คู่ค้า: NAME)
   const inferredContactName = useMemo(() => {
@@ -200,9 +232,10 @@ export default function WhtVendorModal({ isOpen, onClose, businessId, transactio
     if (!response.ok) {
       throw new Error(resJson.error || 'เกิดข้อผิดพลาดในการสร้างไฟล์ PDF');
     }
-    // ไม่เปิดแท็บใหม่/ไม่ดาวน์โหลดอัตโนมัติ — ให้ผู้ใช้กดดู/ดาวน์โหลดจากไอคอนในรายการไฟล์แทน
-
-    alert('สร้างและแนบหนังสือรับรองหัก ณ ที่จ่ายเรียบร้อยแล้ว');
+    
+    // ✅ แจ้งให้ผู้ใช้ทราบว่าไฟล์ถูกอัปโหลดอัตโนมัติแล้ว
+    const fileName = resJson.fileName || 'หนังสือรับรองหัก ณ ที่จ่าย';
+    alert(`✅ สร้างหนังสือรับรองหัก ณ ที่จ่ายสำเร็จ!\n\n📁 ไฟล์: ${fileName}\n💾 ได้ถูกอัปโหลดและบันทึกไว้ในระบบอัตโนมัติแล้ว\n\n� คุณสามารถดูหรือดาวน์โหลดไฟล์ได้จากรายการธุรกรรม`);
     onCertificateCreated();
     onClose();
 
@@ -219,10 +252,40 @@ export default function WhtVendorModal({ isOpen, onClose, businessId, transactio
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="สร้างหนังสือรับรองหัก ณ ที่จ่าย" size="5xl">
       <div className="space-y-4">
+        {/* 🤖 Smart Suggestions Display */}
+        {smartSuggestions && (
+          <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+            <div className="flex items-start space-x-2">
+              <div className="text-blue-500">🤖</div>
+              <div className="flex-1">
+                <h4 className="text-sm font-medium text-blue-800 mb-2">ระบบแนะนำอัตโนมัติ</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <span className="text-blue-700 font-medium">ภ.ง.ด.:</span>
+                    <span className="ml-2 text-blue-600">{smartSuggestions.pndType}</span>
+                  </div>
+                  <div>
+                    <span className="text-blue-700 font-medium">ประเภทเงินได้:</span>
+                    <span className="ml-2 text-blue-600">{smartSuggestions.whtCategory}</span>
+                  </div>
+                </div>
+                <p className="text-xs text-blue-600 mt-2">
+                  💡 ระบบวิเคราะห์จากประเภทรายการและรายละเอียด คุณสามารถแก้ไขได้ตามต้องการ
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ส่วนเลือกประเภท WHT */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
             ประเภทเงินได้ที่หัก ณ ที่จ่าย <span className="text-red-500">*</span>
+            {smartSuggestions && (
+              <span className="ml-2 text-xs text-blue-600">
+                (แนะนำ: {smartSuggestions.whtCategory})
+              </span>
+            )}
           </label>
           <Select
             value={whtCategory}
@@ -240,6 +303,11 @@ export default function WhtVendorModal({ isOpen, onClose, businessId, transactio
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
             ประเภทแบบแสดงรายการภาษี <span className="text-red-500">*</span>
+            {smartSuggestions && (
+              <span className="ml-2 text-xs text-blue-600">
+                (แนะนำ: {smartSuggestions.pndType})
+              </span>
+            )}
           </label>
           <Select
             value={pndType}

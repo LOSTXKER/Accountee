@@ -8,6 +8,7 @@ export interface Business {
   company_address?: string;
   tax_id?: string;
   logo_url?: string | null;
+  signature_url?: string | null;
   bank_details?: string;
   invoice_prefix?: string;
   quotation_prefix?: string;
